@@ -15,6 +15,55 @@ from detection.ml_detector import MLDetector
 from detection.anomaly_detector import AnomalyDetector
 from detection.ensemble import RiskEngine
 
+# --- Regression Tests for UDP Amplification Bug Fix ---
+
+def test_single_udp_dns_query_no_udp_amplification():
+    """Test A: 1 UDP DNS packet must NOT trigger UDP Amplification."""
+    pipeline = FeaturePipeline()
+    detector = DDoSDetector()
+
+    pkt = PacketMetadata(timestamp=100.0, length=110, src_ip="192.168.1.15", dst_ip="8.8.8.8", src_port=54000, dst_port=53, protocol="UDP", dns_query="example.com")
+    flow = Flow(CanonicalFlowKey.from_packet(pkt), pkt)
+    feats = pipeline.extract_features(flow)
+
+    res = detector.analyze_flow(feats)
+    assert res is None, "Single UDP packet falsely triggered DDoSDetector!"
+
+def test_small_udp_flow_no_udp_amplification():
+    """Test B: Small UDP flow (< 5 packets) must NOT trigger UDP Amplification."""
+    pipeline = FeaturePipeline()
+    detector = DDoSDetector()
+
+    pkt0 = PacketMetadata(timestamp=100.0, length=200, src_ip="10.0.0.5", dst_ip="1.1.1.1", src_port=5000, dst_port=53, protocol="UDP")
+    flow = Flow(CanonicalFlowKey.from_packet(pkt0), pkt0)
+
+    for i in range(1, 4):  # Total 4 packets (< 5)
+        flow.add_packet(PacketMetadata(timestamp=100.0 + i*0.01, length=200, src_ip="10.0.0.5", dst_ip="1.1.1.1", src_port=5000, dst_port=53, protocol="UDP"))
+
+    feats = pipeline.extract_features(flow)
+    res = detector.analyze_flow(feats)
+    assert res is None, "Small UDP flow (<5 pkts) falsely triggered DDoSDetector!"
+
+def test_genuine_udp_amplification_triggers_alert():
+    """Test C: Genuine UDP Amplification (>= 5 packets, high rate, asymmetric volume) MUST trigger alert."""
+    pipeline = FeaturePipeline()
+    detector = DDoSDetector()
+
+    pkt0 = PacketMetadata(timestamp=100.0, length=1420, src_ip="198.51.100.77", dst_ip="192.168.1.10", src_port=123, dst_port=55100, protocol="UDP")
+    flow = Flow(CanonicalFlowKey.from_packet(pkt0), pkt0)
+
+    for i in range(1, 30):  # 30 packets (>= 5)
+        flow.add_packet(PacketMetadata(timestamp=100.0 + i*0.005, length=1420, src_ip="198.51.100.77", dst_ip="192.168.1.10", src_port=123, dst_port=55100, protocol="UDP"))
+
+    feats = pipeline.extract_features(flow)
+    res = detector.analyze_flow(feats)
+
+    assert res is not None
+    assert res.threat_class in ["UDP_FLOOD", "UDP_AMPLIFICATION"]
+    assert res.severity == "CRITICAL"
+
+# --- Test D: Existing Threat Regression Tests ---
+
 def test_syn_flood_detection():
     pipeline = FeaturePipeline()
     detector = DDoSDetector()
@@ -31,22 +80,6 @@ def test_syn_flood_detection():
     assert res is not None
     assert res.threat_class == "SYN_FLOOD"
     assert res.severity == "CRITICAL"
-
-def test_udp_amplification_detection():
-    pipeline = FeaturePipeline()
-    detector = DDoSDetector()
-
-    pkt = PacketMetadata(timestamp=100.0, length=1420, src_ip="198.51.100.77", dst_ip="192.168.1.10", src_port=123, dst_port=55100, protocol="UDP")
-    flow = Flow(CanonicalFlowKey.from_packet(pkt), pkt)
-
-    for i in range(1, 30):
-        flow.add_packet(PacketMetadata(timestamp=100.0 + i*0.005, length=1420, src_ip="198.51.100.77", dst_ip="192.168.1.10", src_port=123, dst_port=55100, protocol="UDP"))
-
-    feats = pipeline.extract_features(flow)
-    res = detector.analyze_flow(feats)
-
-    assert res is not None
-    assert res.threat_class in ["UDP_FLOOD", "UDP_AMPLIFICATION"]
 
 def test_beacon_c2_detection():
     pipeline = FeaturePipeline()
@@ -153,12 +186,10 @@ def test_exfiltration_detection():
 def test_baseline_profiler():
     profiler = HostBaselineProfiler(min_history_flows=3)
 
-    # First flow -> Cold start (0.0 Z-score)
     flow1 = Flow(CanonicalFlowKey.from_packet(PacketMetadata(timestamp=1.0, length=100, src_ip="10.0.0.5", dst_ip="1.1.1.1", src_port=5000, dst_port=80, protocol="TCP")), PacketMetadata(timestamp=1.0, length=100, src_ip="10.0.0.5", dst_ip="1.1.1.1", src_port=5000, dst_port=80, protocol="TCP"))
     res1 = profiler.get_baseline_features("10.0.0.5", flow1.fwd_bytes, flow1.fwd_packets)
     assert res1["byte_zscore"] == 0.0
 
-    # 4th flow -> Established history -> Extreme volume produces elevated Z-score
     for i in range(2, 5):
         profiler.get_baseline_features("10.0.0.5", 100, 1)
 
