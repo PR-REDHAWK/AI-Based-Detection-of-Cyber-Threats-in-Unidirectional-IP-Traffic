@@ -1,54 +1,69 @@
 import math
-from typing import Dict, Any, Tuple
-from flows.flow_key import Flow
+from typing import Dict, Any
 
 class HostBaselineProfiler:
     """
-    Rolling Statistical Baseline & Behavior Profiler per host/service.
-    Calculates rolling mean and standard deviation of connection rates, byte volumes,
-    and computes Z-score statistical deviations for anomaly and exfiltration detection.
+    Rolling Statistical Baseline & Behavior Profiler per host.
+    Tracks exponential moving average (EMA) of forward bytes and packets,
+    computing Z-scores while enforcing cold-start and attack protection policies.
     """
 
-    def __init__(self, alpha: float = 0.1):
-        self.alpha = alpha  # Exponential moving average decay parameter
-        # host_ip -> { "mean_bytes": float, "std_bytes": float, "mean_pkts": float, "count": int }
-        self.host_profiles: Dict[str, Dict[str, float]] = {}
+    def __init__(self, alpha: float = 0.1, min_history_flows: int = 3):
+        self.alpha = alpha
+        self.min_history_flows = min_history_flows
+        # host_ip -> { "mean_bytes": float, "std_bytes": float, "mean_pkts": float, "std_pkts": float, "flow_count": int }
+        self.host_profiles: Dict[str, Dict[str, Any]] = {}
 
-    def update_and_get_deviation(self, flow: Flow, flow_features: Dict[str, Any]) -> Dict[str, float]:
-        host_ip = flow.initiator_ip
-        bytes_sent = float(flow.fwd_bytes)
-        pkts_sent = float(flow.fwd_packets)
+    def get_baseline_features(self, initiator_ip: str, fwd_bytes: int, fwd_pkts: int, is_attack: bool = False) -> Dict[str, float]:
+        bytes_val = float(fwd_bytes)
+        pkts_val = float(fwd_pkts)
 
-        if host_ip not in self.host_profiles:
-            self.host_profiles[host_ip] = {
-                "mean_bytes": bytes_sent,
+        if initiator_ip not in self.host_profiles:
+            self.host_profiles[initiator_ip] = {
+                "mean_bytes": bytes_val,
                 "std_bytes": 100.0,
-                "mean_pkts": pkts_sent,
+                "mean_pkts": pkts_val,
                 "std_pkts": 5.0,
-                "count": 1
+                "flow_count": 1
             }
-            return {"byte_zscore": 0.0, "pkt_zscore": 0.0, "is_new_host": 1.0}
+            # Cold-start policy: Return neutral Z-scores for new hosts
+            return {
+                "byte_zscore": 0.0,
+                "packet_zscore": 0.0,
+                "host_flow_count": 1.0
+            }
 
-        profile = self.host_profiles[host_ip]
+        profile = self.host_profiles[initiator_ip]
+        flow_count = profile["flow_count"]
 
-        # Calculate Z-scores prior to updating baseline
-        bytes_diff = abs(bytes_sent - profile["mean_bytes"])
-        byte_zscore = bytes_diff / max(profile["std_bytes"], 10.0)
+        # Cold start check
+        if flow_count < self.min_history_flows:
+            byte_zscore = 0.0
+            packet_zscore = 0.0
+        else:
+            bytes_diff = abs(bytes_val - profile["mean_bytes"])
+            byte_zscore = bytes_diff / max(profile["std_bytes"], 10.0)
 
-        pkts_diff = abs(pkts_sent - profile["mean_pkts"])
-        pkt_zscore = pkts_diff / max(profile["std_pkts"], 1.0)
+            pkts_diff = abs(pkts_val - profile["mean_pkts"])
+            packet_zscore = pkts_diff / max(profile["std_pkts"], 1.0)
 
-        # Update EMA baseline metrics
-        profile["mean_bytes"] = (1 - self.alpha) * profile["mean_bytes"] + self.alpha * bytes_sent
-        profile["std_bytes"] = (1 - self.alpha) * profile["std_bytes"] + self.alpha * bytes_diff
+        # Attack Protection Policy: Do not contaminate baseline with attack traffic
+        if not is_attack:
+            bytes_diff = abs(bytes_val - profile["mean_bytes"])
+            pkts_diff = abs(pkts_val - profile["mean_pkts"])
 
-        profile["mean_pkts"] = (1 - self.alpha) * profile["mean_pkts"] + self.alpha * pkts_sent
-        profile["std_pkts"] = (1 - self.alpha) * profile["std_pkts"] + self.alpha * pkts_diff
+            profile["mean_bytes"] = (1 - self.alpha) * profile["mean_bytes"] + self.alpha * bytes_val
+            profile["std_bytes"] = (1 - self.alpha) * profile["std_bytes"] + self.alpha * bytes_diff
 
-        profile["count"] += 1
+            profile["mean_pkts"] = (1 - self.alpha) * profile["mean_pkts"] + self.alpha * pkts_val
+            profile["std_pkts"] = (1 - self.alpha) * profile["std_pkts"] + self.alpha * pkts_diff
+
+            profile["flow_count"] += 1
 
         return {
-            "byte_zscore": round(byte_zscore, 2),
-            "pkt_zscore": round(pkt_zscore, 2),
-            "is_new_host": 0.0
+            "byte_zscore": round(float(byte_zscore), 2),
+            "packet_zscore": round(float(packet_zscore), 2),
+            "host_flow_count": float(profile["flow_count"])
         }
+
+global_profiler = HostBaselineProfiler()

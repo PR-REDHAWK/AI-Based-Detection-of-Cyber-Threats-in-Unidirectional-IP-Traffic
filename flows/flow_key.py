@@ -28,7 +28,8 @@ class CanonicalFlowKey:
 class Flow:
     """
     Bidirectional network flow tracking state incrementally.
-    Preserves original directionality (Initiator vs Responder).
+    Preserves original directionality (Initiator vs Responder)
+    and distinguishes between Lifetime Counters and Window Delta Counters.
     """
 
     def __init__(self, key: CanonicalFlowKey, initial_packet: PacketMetadata):
@@ -45,13 +46,19 @@ class Flow:
         self.first_seen = initial_packet.timestamp
         self.last_seen = initial_packet.timestamp
 
-        # Counters
+        # Lifetime Counters
         self.fwd_packets = 0
         self.rev_packets = 0
         self.fwd_bytes = 0
         self.rev_bytes = 0
 
-        # TCP Flag Counters (SYN=0x02, ACK=0x10, FIN=0x01, RST=0x04, PSH=0x08, URG=0x20)
+        # Window Delta Counters (Reset per window slice)
+        self.win_fwd_packets = 0
+        self.win_rev_packets = 0
+        self.win_fwd_bytes = 0
+        self.win_rev_bytes = 0
+
+        # TCP Flag Counters
         self.fwd_syn = 0
         self.rev_syn = 0
         self.fwd_syn_ack = 0
@@ -63,7 +70,7 @@ class Flow:
 
         # Dynamics & Sequences
         self.packet_sizes: List[int] = []
-        self.packet_directions: List[str] = []  # 'FWD' or 'REV'
+        self.packet_directions: List[str] = []
         self.timestamps: List[float] = []
         self.all_iats: List[float] = []
         self.fwd_iats: List[float] = []
@@ -97,6 +104,8 @@ class Flow:
         if is_fwd:
             self.fwd_packets += 1
             self.fwd_bytes += pkt.length
+            self.win_fwd_packets += 1
+            self.win_fwd_bytes += pkt.length
             self.packet_directions.append('FWD')
             if pkt.tcp_flags is not None:
                 if (pkt.tcp_flags & 0x02) and not (pkt.tcp_flags & 0x10):
@@ -110,6 +119,8 @@ class Flow:
         else:
             self.rev_packets += 1
             self.rev_bytes += pkt.length
+            self.win_rev_packets += 1
+            self.win_rev_bytes += pkt.length
             self.packet_directions.append('REV')
             if pkt.tcp_flags is not None:
                 if (pkt.tcp_flags & 0x02) and not (pkt.tcp_flags & 0x10):
@@ -121,13 +132,19 @@ class Flow:
                 if pkt.tcp_flags & 0x04:
                     self.rev_rst += 1
 
-        # Collect application metadata if present
         if pkt.dns_query and pkt.dns_query not in self.dns_queries:
             self.dns_queries.append(pkt.dns_query)
         if pkt.tls_sni and pkt.tls_sni not in self.tls_snis:
             self.tls_snis.append(pkt.tls_sni)
         if pkt.tls_version and not self.tls_version:
             self.tls_version = pkt.tls_version
+
+    def reset_window_counters(self):
+        """Resets window delta counters after a sliding window emission."""
+        self.win_fwd_packets = 0
+        self.win_rev_packets = 0
+        self.win_fwd_bytes = 0
+        self.win_rev_bytes = 0
 
     @property
     def duration(self) -> float:

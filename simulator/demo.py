@@ -18,8 +18,8 @@ logger = logging.getLogger("OracleShieldDemo")
 
 class LiveDemoRunner:
     """
-    Live Demo Runner that executes real-time streaming traffic generation,
-    flow aggregation, feature extraction, threat detection, and WebSocket broadcasting.
+    Live Demo Runner executing real-time streaming traffic generation across all 9 threat classes,
+    flow aggregation, feature extraction, baseline profiling, threat detection, and WebSocket broadcasting.
     """
 
     def __init__(self):
@@ -29,19 +29,22 @@ class LiveDemoRunner:
         self.generator = TrafficGenerator()
 
     async def run_simulation(self):
-        logger.info("Starting OracleShield Live Demo Simulation...")
+        logger.info("Starting OracleShield Live Demo Simulation across all 9 threat classes...")
         start_time = time.time()
         pkt_clock = start_time
 
-        # Simulation scenario sequence
+        # Comprehensive SIH threat scenario sequence
         scenarios = [
             ("BENIGN", lambda t: self.generator.generate_benign_flow(t)),
-            ("SYN_FLOOD", lambda t: self.generator.generate_syn_flood(t, duration_seconds=3.0, rate=50.0)),
-            ("BENIGN", lambda t: self.generator.generate_benign_flow(t)),
+            ("SYN_FLOOD", lambda t: self.generator.generate_syn_flood(t, duration_seconds=2.0, rate=50.0)),
+            ("UDP_AMPLIFICATION", lambda t: self.generator.generate_udp_amplification(t)),
+            ("C2_BEACON", lambda t: self.generator.generate_c2_beacon(t, count=6, interval=1.2)),
             ("PORT_SCAN", lambda t: self.generator.generate_port_scan(t, port_count=20)),
-            ("BENIGN", lambda t: self.generator.generate_benign_flow(t)),
-            ("C2_BEACON", lambda t: self.generator.generate_c2_beacon(t, count=8, interval=1.5)),
-            ("BENIGN", lambda t: self.generator.generate_benign_flow(t))
+            ("HOST_SCAN", lambda t: self.generator.generate_host_scan(t, host_count=20)),
+            ("DGA_DOMAIN", lambda t: self.generator.generate_dga_traffic(t)),
+            ("DNS_TUNNELING", lambda t: self.generator.generate_dns_tunneling(t)),
+            ("EXFILTRATION", lambda t: self.generator.generate_exfiltration(t)),
+            ("SUSPICIOUS_ENCRYPTED_SESSION", lambda t: self.generator.generate_encrypted_session_anomaly(t))
         ]
 
         scenario_idx = 0
@@ -63,11 +66,9 @@ class LiveDemoRunner:
                 stats_cache["bytes_processed"] += pkt.length
                 stats_cache["avg_latency_ms"] = round(latency, 2)
 
-                # Process emitted/windowed flows
                 for flow in emitted_flows:
                     stats_cache["flows_processed"] += 1
 
-                    # Update in-memory flow cache
                     in_memory_flows.insert(0, {
                         "flow_id": flow.flow_id,
                         "initiator_ip": flow.initiator_ip,
@@ -84,7 +85,7 @@ class LiveDemoRunner:
                     if len(in_memory_flows) > 200:
                         in_memory_flows.pop()
 
-                    # Feature extraction
+                    # Feature extraction & baseline Z-scoring
                     feats = self.feature_pipeline.extract_features(flow)
 
                     # Threat Analysis

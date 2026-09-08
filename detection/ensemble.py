@@ -6,6 +6,8 @@ from detection.beacon_detector import BeaconDetector
 from detection.dga_detector import DGADetector
 from detection.dns_tunnel_detector import DNSTunnelDetector
 from detection.exfiltration_detector import ExfiltrationDetector
+from detection.encrypted_session_detector import EncryptedSessionDetector
+from detection.ml_detector import MLDetector
 from detection.anomaly_detector import AnomalyDetector
 from alerts.generator import AlertGenerator
 from alerts.schema import Alert
@@ -13,9 +15,8 @@ from flows.flow_key import Flow
 
 class RiskEngine:
     """
-    Central Ensemble Risk Engine.
-    Executes all active threat detectors, resolves weighted threat classifications,
-    separates confidence from severity, and returns final alerts.
+    Central Ensemble Risk Engine combining Rule Detectors, Supervised ML Detector,
+    Dedicated Encrypted Session Detector, and Unsupervised Isolation Forest Anomaly Detector.
     """
 
     def __init__(self):
@@ -26,6 +27,8 @@ class RiskEngine:
             DGADetector(),
             DNSTunnelDetector(),
             ExfiltrationDetector(),
+            EncryptedSessionDetector(),
+            MLDetector(),
             AnomalyDetector()
         ]
         self.alert_generator = AlertGenerator()

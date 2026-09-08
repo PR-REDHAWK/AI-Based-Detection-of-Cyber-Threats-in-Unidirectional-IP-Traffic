@@ -1,12 +1,12 @@
 import time
-from typing import Dict, List, Optional, Generator
+from typing import Dict, List, Optional
 from ingest.models import PacketMetadata
 from flows.flow_key import CanonicalFlowKey, Flow
 
 class FlowManager:
     """
     Incremental Flow Manager maintaining active bidirectional flows,
-    performing active/idle timeouts, and emitting closed or windowed flows.
+    performing active/idle timeouts, and emitting windowed flow snapshots.
     """
 
     def __init__(self,
@@ -54,7 +54,6 @@ class FlowManager:
 
         # Check sliding window expiration
         if (pkt.timestamp - self.last_window_timestamp) >= self.window_seconds:
-            # Emit active flows for windowed evaluation
             window_flows = self._flush_window_flows(pkt.timestamp)
             flows_to_emit.extend(window_flows)
             self.last_window_timestamp = pkt.timestamp
@@ -62,11 +61,12 @@ class FlowManager:
         return flows_to_emit
 
     def _flush_window_flows(self, current_timestamp: float) -> List[Flow]:
-        """Collect active flows that have seen traffic within current window."""
+        """Collect active flows that have seen traffic within current window, then reset window deltas."""
         windowed: List[Flow] = []
         for key, flow in list(self.active_flows.items()):
             if (current_timestamp - flow.last_seen) <= self.window_seconds:
                 windowed.append(flow)
+                flow.reset_window_counters()
         return windowed
 
     def flush_expired(self, current_timestamp: float) -> List[Flow]:
