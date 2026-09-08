@@ -1,0 +1,49 @@
+# OracleShield Configuration
+
+streaming:
+  window_seconds: 5
+  allowed_lateness_seconds: 1
+  active_flow_timeout_seconds: 60
+  idle_flow_timeout_seconds: 15
+
+detection:
+  ddos:
+    syn_rate_threshold: 50.0 # SYN packets per sec
+    syn_ack_ratio_threshold: 0.1 # Max SYN-ACK completion ratio
+    udp_rate_threshold: 100.0 # UDP packets per sec
+    udp_asymmetry_threshold: 5.0 # Rev bytes / Fwd bytes
+  scan:
+    port_scan_threshold: 15 # Unique dst ports per src IP in window
+    host_scan_threshold: 15 # Unique dst IPs per src IP in window
+  beacon:
+    periodicity_min_score: 0.85
+    max_iat_std: 1.5 # seconds
+    min_connections: 5
+  dga:
+    entropy_threshold: 3.5
+    digit_ratio_threshold: 0.3
+  dns_tunnel:
+    query_len_threshold: 45
+    entropy_threshold: 3.8
+  exfiltration:
+    outbound_ratio_threshold: 4.0 # Fwd bytes / Rev bytes
+    min_outbound_bytes: 1048576 # 1 MB
+  weights:
+    ddos_weight: 1.0
+    c2_weight: 1.0
+    dga_weight: 1.0
+    dns_tunnel_weight: 1.0
+    scan_weight: 1.0
+    exfiltration_weight: 1.0
+    anomaly_weight: 0.8
+
+performance:
+  target_flows_per_second: 2000
+  worker_threads: 4
+
+database:
+  db_url: "sqlite+aiosqlite:///./oracleshield.db"
+
+server:
+  host: "127.0.0.1"
+  port: 8000
